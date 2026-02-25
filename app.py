@@ -48,7 +48,7 @@ def rimuovi_filtro_singolo(index):
 def pagina_creazione():
     st.title("🛠️ Creazione e Processing Segnale")
     
-    with st.sidebar.expander("📂 CARICAMENTO FILE (TXT o MP3)", expanded=True):
+    with st.sidebar.expander("CARICAMENTO FILE (TXT o MP3)", expanded=True):
         uploaded_files = st.file_uploader("Carica file", type=["txt", "mp3"], accept_multiple_files=True)
         if uploaded_files:
             for f in uploaded_files:
@@ -204,7 +204,7 @@ def pagina_creazione():
     st.plotly_chart(fig, use_container_width=True)
 # --- MODULO 2: ANALISI STATISTICA ---
 def pagina_statistica():
-    st.title("📊 Analisi Statistica Avanzata")
+    st.title("Analisi Statistica Avanzata")
     if not st.session_state.segnali_caricati:
         st.warning("Nessun segnale in memoria."); return
     with st.expander("SELEZIONE SEGNALE", expanded=True):
@@ -212,7 +212,7 @@ def pagina_statistica():
         scelta = st.selectbox("Scegli il segnale:", nomi)
         data = st.session_state.segnali_caricati[scelta]
     
-    st.subheader("📈 Metriche Statistiche")
+    st.subheader("Metriche Statistiche")
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     media, sigma, n_campioni = np.mean(data), np.std(data), len(data)
     m1.metric("Massimo", f"{np.max(data):.4f}")
@@ -245,7 +245,7 @@ def pagina_statistica():
 
 # --- MODULO 3: AUDIO ---
 def pagina_audio():
-    st.title("🎵 Player Audio")
+    st.title("Player Audio")
     if not st.session_state.segnali_caricati:
         st.warning("Nessun segnale in memoria."); return
     with st.expander("RIPRODUZIONE", expanded=True):
@@ -290,7 +290,7 @@ def pagina_filtraggio_iir():
         st.warning("Nessun segnale in memoria."); return
 
     # 1. SELEZIONE SEGNALE
-    with st.expander("📂 SELEZIONE SEGNALE", expanded=True):
+    with st.expander("SELEZIONE SEGNALE", expanded=True):
         c1, c2 = st.columns([2, 1])
         nomi = list(st.session_state.segnali_caricati.keys())
         scelta = c1.selectbox("Segnale da filtrare:", nomi, key="sel_iir")
