@@ -6,12 +6,6 @@ from plotly.subplots import make_subplots
 from pydub import AudioSegment
 import io
 from scipy import signal
-from pydub import AudioSegment
-import os
-
-# Comunica a pydub dove trovare l'eseguibile ffmpeg nella cartella locale
-ffmpeg_path = os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
-AudioSegment.converter = ffmpeg_path
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Signal Processing Suite", layout="wide")
@@ -46,9 +40,9 @@ def rimuovi_filtro_singolo(index):
 
 # --- MODULO 1: CREAZIONE E PROCESSING COMPLETO ---
 def pagina_creazione():
-    st.title("🛠️ Creazione e Processing Segnale")
+    st.title("Creazione e Processing Segnale")
     
-    with st.sidebar.expander("CARICAMENTO FILE (TXT o MP3)", expanded=True):
+    with st.sidebar.expander("📂 CARICAMENTO FILE (TXT o MP3)", expanded=True):
         uploaded_files = st.file_uploader("Carica file", type=["txt", "mp3"], accept_multiple_files=True)
         if uploaded_files:
             for f in uploaded_files:
@@ -107,9 +101,9 @@ def pagina_creazione():
     magnitudo_norm[0] /= 2.0
 
     # 3. CONFIGURAZIONE NYQUIST
-    with st.expander("3. CONFIGURAZIONE NYQUIST (Troncamento Banda)", expanded=True):
-        abilita_nyq = st.checkbox("Abilita Pulizia Statistica", value=False, key=f"nyq_en_{scelta}")
-        metodo_banda = st.radio("Modalità di taglio:", ["Taglia ogni armonica sotto soglia", "Mantieni tutto tra F_min e F_max (Banda Effettiva)"], index=1, disabled=not abilita_nyq, key=f"bm_{scelta}")
+    with st.expander("3. CONFIGURAZIONE SOGLIA DI SEGNALE NULLO", expanded=True):
+        abilita_nyq = st.checkbox("Abilita SOGLIA DI SEGNALE NULLO", value=False, key=f"nyq_en_{scelta}")
+        metodo_banda = st.radio("Modalità di taglio:", ["Taglia ogni armonica sotto la soglia", "Mantieni tutto tra F_min e F_max (Banda Effettiva)"], index=1, disabled=not abilita_nyq, key=f"bm_{scelta}")
         col_n1, col_n2 = st.columns(2)
         metodo_nyq = col_n1.selectbox("Metodo calcolo soglia:", ["Soglia Assoluta", "Soglia Sigma (Statistica)"], disabled=not abilita_nyq, key=f"meth_{scelta}")
         soglia_calcolata = 0.0
@@ -126,7 +120,7 @@ def pagina_creazione():
                 f_min_nyq, f_max_nyq = float(freqs[idx_v[0]]), float(freqs[idx_v[-1]])
 
     # 4. CONFIGURAZIONE FILTRI MANUALI (VERSIONE BLOCCATA)
-    with st.expander("4. CONFIGURAZIONE FILTRI MANUALI", expanded=True):
+    with st.expander("4. CONFIGURAZIONE FILTRI IDEALI", expanded=True):
         st.write("**Aggiungi nuovo filtro:**")
         ca1, ca2, ca3, ca4 = st.columns(4)
         if ca1.button("➕ Passa-Basso"): aggiungi_filtro_specifico("Passa-Basso", f_nyquist_val); st.rerun()
@@ -204,7 +198,7 @@ def pagina_creazione():
     st.plotly_chart(fig, use_container_width=True)
 # --- MODULO 2: ANALISI STATISTICA ---
 def pagina_statistica():
-    st.title("Analisi Statistica Avanzata")
+    st.title("Analisi Statistica del segnale")
     if not st.session_state.segnali_caricati:
         st.warning("Nessun segnale in memoria."); return
     with st.expander("SELEZIONE SEGNALE", expanded=True):
@@ -245,7 +239,7 @@ def pagina_statistica():
 
 # --- MODULO 3: AUDIO ---
 def pagina_audio():
-    st.title("Player Audio")
+    st.title("Riproduci Segnale come Audio")
     if not st.session_state.segnali_caricati:
         st.warning("Nessun segnale in memoria."); return
     with st.expander("RIPRODUZIONE", expanded=True):
@@ -284,13 +278,13 @@ def rimuovi_filtro_iir(index):
         
 # --- MODULO 3: FILTRAGGIO IIR CON BODE (MAGNITUDO E FASE LOG) ---
 def pagina_filtraggio_iir():
-    st.title("⚡ Analisi di Bode (Pulsazione Logaritmica)")
+    st.title("Filtraggio IIR e diagramma di Bode")
     
     if not st.session_state.segnali_caricati:
         st.warning("Nessun segnale in memoria."); return
 
     # 1. SELEZIONE SEGNALE
-    with st.expander("SELEZIONE SEGNALE", expanded=True):
+    with st.expander("📂 SELEZIONE SEGNALE", expanded=True):
         c1, c2 = st.columns([2, 1])
         nomi = list(st.session_state.segnali_caricati.keys())
         scelta = c1.selectbox("Segnale da filtrare:", nomi, key="sel_iir")
