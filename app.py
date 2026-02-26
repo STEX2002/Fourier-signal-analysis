@@ -3,9 +3,10 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy.stats import norm
 from plotly.subplots import make_subplots
-from pydub import AudioSegment
+#from pydub import AudioSegment
 import io
 from scipy import signal
+from scipy.io import wavfile
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Signal Processing Suite", layout="wide")
@@ -43,23 +44,57 @@ def rimuovi_filtro_singolo(index):
 def pagina_creazione():
     st.title("Creazione e Processing Segnale")
     
-    with st.sidebar.expander("📂 CARICAMENTO FILE (TXT o MP3)", expanded=True):
-        uploaded_files = st.file_uploader("Carica file", type=["txt", "mp3"], accept_multiple_files=True)
+    with st.sidebar.expander("📂 CARICAMENTO FILE (TXT o WAV)", expanded=True):
+        # Updated type to include "wav" instead of "mp3"
+        uploaded_files = st.file_uploader("Carica file", type=["txt", "wav"], accept_multiple_files=True)
+        
         if uploaded_files:
             for f in uploaded_files:
                 if f.name not in st.session_state.segnali_caricati:
+                    # --- TXT File Handling ---
                     if f.name.endswith(".txt"):
                         content = f.read().decode("utf-8")
                         data = np.array([float(x) for x in content.split()])
+                        
+                        # Assuming a default duration of 30s if not specified
+                        fs_estimated = len(data) / 30.0
                         st.session_state.segnali_caricati[f.name] = data
-                        st.session_state.info_segnali[f.name] = {"fs": len(data)/30.0, "durata": 30.0}
-                    elif f.name.endswith(".mp3"):
-                        audio = AudioSegment.from_file(io.BytesIO(f.read()), format="mp3")
-                        audio = audio.set_channels(1).set_frame_rate(22050)
-                        data = np.array(audio.get_array_of_samples()).astype(np.float32)
-                        if np.max(np.abs(data)) > 0: data /= np.max(np.abs(data))
+                        st.session_state.info_segnali[f.name] = {
+                            "fs": fs_estimated, 
+                            "durata": 30.0
+                        }
+                    
+                    # --- WAV File Handling (Replacing AudioSegment) ---
+                    elif f.name.endswith(".wav"):
+                        # Read the WAV file using scipy
+                        # wavfile.read returns the sample rate (int) and data (numpy array)
+                        fs, data = wavfile.read(io.BytesIO(f.read()))
+                        
+                        # Convert to float32 for signal processing consistency
+                        # Handle integer PCM formats (16-bit or 32-bit)
+                        if data.dtype == np.int16:
+                            data = data.astype(np.float32) / 32768.0
+                        elif data.dtype == np.int32:
+                            data = data.astype(np.float32) / 2147483648.0
+                        elif data.dtype == np.uint8:
+                            data = (data.astype(np.float32) - 128.0) / 128.0
+                        
+                        # Convert to Mono if Stereo (average the channels)
+                        if len(data.shape) > 1:
+                            data = np.mean(data, axis=1)
+                        
+                        # Peak Normalization
+                        max_val = np.max(np.abs(data))
+                        if max_val > 0:
+                            data = data / max_val
+                            
+                        durata = len(data) / float(fs)
+                        
                         st.session_state.segnali_caricati[f.name] = data
-                        st.session_state.info_segnali[f.name] = {"fs": 22050.0, "durata": len(data)/22050.0}
+                        st.session_state.info_segnali[f.name] = {
+                            "fs": float(fs), 
+                            "durata": durata
+                        }
 
     if not st.session_state.segnali_caricati:
         st.info("Carica un file .txt o .mp3 dalla sidebar per iniziare.")
