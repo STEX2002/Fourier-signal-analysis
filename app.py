@@ -3,10 +3,10 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy.stats import norm
 from plotly.subplots import make_subplots
-from pydub import AudioSegment
+#from pydub import AudioSegment
 import io
 from scipy import signal
-
+from scipy.io import wavfile
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Signal Processing Suite", layout="wide")
 
@@ -42,8 +42,9 @@ def rimuovi_filtro_singolo(index):
 def pagina_creazione():
     st.title("Creazione e Processing Segnale")
     
-    with st.sidebar.expander("📂 CARICAMENTO FILE (TXT o MP3)", expanded=True):
-        uploaded_files = st.file_uploader("Carica file", type=["txt", "mp3"], accept_multiple_files=True)
+    with st.sidebar.expander("📂 CARICAMENTO FILE (TXT o WAV)", expanded=True):
+        # Accettiamo solo .txt e .wav per eliminare dipendenze pesanti come FFmpeg/pydub
+        uploaded_files = st.file_uploader("Carica file", type=["txt", "wav"], accept_multiple_files=True)
         if uploaded_files:
             for f in uploaded_files:
                 if f.name not in st.session_state.segnali_caricati:
@@ -52,16 +53,34 @@ def pagina_creazione():
                         data = np.array([float(x) for x in content.split()])
                         st.session_state.segnali_caricati[f.name] = data
                         st.session_state.info_segnali[f.name] = {"fs": len(data)/30.0, "durata": 30.0}
-                    elif f.name.endswith(".mp3"):
-                        audio = AudioSegment.from_file(io.BytesIO(f.read()), format="mp3")
-                        audio = audio.set_channels(1).set_frame_rate(22050)
-                        data = np.array(audio.get_array_of_samples()).astype(np.float32)
-                        if np.max(np.abs(data)) > 0: data /= np.max(np.abs(data))
+                    
+                    elif f.name.endswith(".wav"):
+                        # Lettura con SciPy (veloce e leggera)
+                        fs, data = wavfile.read(io.BytesIO(f.read()))
+                        
+                        # 1. Gestione Stereo -> Mono
+                        if len(data.shape) > 1:
+                            data = np.mean(data, axis=1)
+                        
+                        # 2. Normalizzazione in base al bit-depth (fondamentale per SciPy)
+                        if data.dtype == np.int16:
+                            data = data.astype(np.float32) / 32768.0
+                        elif data.dtype == np.int32:
+                            data = data.astype(np.float32) / 2147483648.0
+                        elif data.dtype == np.uint8:
+                            data = (data.astype(np.float32) - 128.0) / 128.0
+                        else:
+                            data = data.astype(np.float32)
+
+                        # 3. Salvataggio
                         st.session_state.segnali_caricati[f.name] = data
-                        st.session_state.info_segnali[f.name] = {"fs": 22050.0, "durata": len(data)/22050.0}
+                        st.session_state.info_segnali[f.name] = {
+                            "fs": float(fs), 
+                            "durata": len(data) / float(fs)
+                        }
 
     if not st.session_state.segnali_caricati:
-        st.info("Carica un file .txt o .mp3 dalla sidebar per iniziare.")
+        st.info("Carica un file .txt o .wav dalla sidebar per iniziare.")
         return
 
     # 1. CONFIGURAZIONE FILE
@@ -84,30 +103,40 @@ def pagina_creazione():
         dt = T_totale / N_tot
         t_full = np.linspace(0, T_totale, N_tot, endpoint=False)
         mask_t = (t_full >= t_start) & (t_full <= t_end)
+        
         segnale_orig = segnale_full[mask_t]
         t_orig = t_full[mask_t]
+        
+        # Garantiamo N dispari per una FFT simmetrica pulita se necessario, 
+        # o semplicemente gestiamo la lunghezza
         if len(segnale_orig) % 2 == 0 and len(segnale_orig) > 0:
             segnale_orig, t_orig = segnale_orig[:-1], t_orig[:-1]
+        
         N = len(segnale_orig)
         durata_finestra = t_end - t_start
         fs_reale = N / durata_finestra if durata_finestra > 0 else 0
-        if N < 2: st.error("Seleziona una finestra valida."); return
+        
+        if N < 2: 
+            st.error("Seleziona una finestra valida.")
+            return
 
-    # FFT
+    # CALCOLO FFT
     freqs = np.fft.fftfreq(N, d=dt)
     f_nyquist_val = float(np.max(np.abs(freqs)))
     fourier_coeffs = np.fft.fft(segnale_orig)
     magnitudo_norm = (2.0 / N) * np.abs(fourier_coeffs)
     magnitudo_norm[0] /= 2.0
 
-    # 3. CONFIGURAZIONE NYQUIST
+    # 3. CONFIGURAZIONE SOGLIA DI SEGNALE NULLO
     with st.expander("3. CONFIGURAZIONE SOGLIA DI SEGNALE NULLO", expanded=True):
         abilita_nyq = st.checkbox("Abilita SOGLIA DI SEGNALE NULLO", value=False, key=f"nyq_en_{scelta}")
         metodo_banda = st.radio("Modalità di taglio:", ["Taglia ogni armonica sotto la soglia", "Mantieni tutto tra F_min e F_max (Banda Effettiva)"], index=1, disabled=not abilita_nyq, key=f"bm_{scelta}")
         col_n1, col_n2 = st.columns(2)
         metodo_nyq = col_n1.selectbox("Metodo calcolo soglia:", ["Soglia Assoluta", "Soglia Sigma (Statistica)"], disabled=not abilita_nyq, key=f"meth_{scelta}")
+        
         soglia_calcolata = 0.0
         f_min_nyq, f_max_nyq = 0.0, 0.0
+        
         if abilita_nyq:
             if metodo_nyq == "Soglia Assoluta":
                 soglia_calcolata = col_n2.number_input("Valore soglia:", value=0.01, format="%.4f", key=f"val_{scelta}")
@@ -115,18 +144,20 @@ def pagina_creazione():
                 n_sigma = col_n2.slider("Moltiplicatore Sigma (n-sigma):", 0.0, 10.0, 3.0, key=f"sig_{scelta}")
                 mad = np.median(np.abs(magnitudo_norm - np.median(magnitudo_norm)))
                 soglia_calcolata = np.median(magnitudo_norm) + (n_sigma * 1.4826 * mad)
+            
             idx_v = np.where((magnitudo_norm >= soglia_calcolata) & (freqs > 1e-9))[0]
             if len(idx_v) > 0:
                 f_min_nyq, f_max_nyq = float(freqs[idx_v[0]]), float(freqs[idx_v[-1]])
 
-    # 4. CONFIGURAZIONE FILTRI MANUALI (VERSIONE BLOCCATA)
+    # 4. CONFIGURAZIONE FILTRI MANUALI
     with st.expander("4. CONFIGURAZIONE FILTRI IDEALI", expanded=True):
         st.write("**Aggiungi nuovo filtro:**")
         ca1, ca2, ca3, ca4 = st.columns(4)
-        if ca1.button("➕ Passa-Basso"): aggiungi_filtro_specifico("Passa-Basso", f_nyquist_val); st.rerun()
-        if ca2.button("➕ Passa-Alto"): aggiungi_filtro_specifico("Passa-Alto", f_nyquist_val); st.rerun()
-        if ca3.button("➕ Passa-Banda"): aggiungi_filtro_specifico("Passa-Banda", f_nyquist_val); st.rerun()
-        if ca4.button("➕ Arresta-Banda"): aggiungi_filtro_specifico("Arresta-Banda", f_nyquist_val); st.rerun()
+        # Nota: queste funzioni (aggiungi_filtro_specifico) devono essere definite nel tuo codice globale
+        if ca1.button("➕ Passa-Basso"): st.session_state.filtri.append({'tipo': "Passa-Basso", 'freq': f_nyquist_val/2}); st.rerun()
+        if ca2.button("➕ Passa-Alto"): st.session_state.filtri.append({'tipo': "Passa-Alto", 'freq': 10.0}); st.rerun()
+        if ca3.button("➕ Passa-Banda"): st.session_state.filtri.append({'tipo': "Passa-Banda", 'freq': [10.0, f_nyquist_val/2]}); st.rerun()
+        if ca4.button("➕ Arresta-Banda"): st.session_state.filtri.append({'tipo': "Arresta-Banda", 'freq': [49.0, 51.0]}); st.rerun()
         
         st.markdown("---")
         for i, f in enumerate(st.session_state.filtri):
@@ -135,7 +166,7 @@ def pagina_creazione():
             label = "Range [Hz]" if "Banda" in f['tipo'] else "Taglio [Hz]"
             f['freq'] = c_slider.slider(label, 0.0, f_nyquist_val, value=f['freq'], key=f"f_{i}_{scelta}")
             if c_del.button("🗑️", key=f"del_{i}_{scelta}"):
-                rimuovi_filtro_singolo(i); st.rerun()
+                st.session_state.filtri.pop(i); st.rerun()
 
     # LOGICA FILTRAGGIO
     abs_freqs = np.abs(freqs)
@@ -143,7 +174,8 @@ def pagina_creazione():
     if abilita_nyq:
         if metodo_banda == "Mantieni tutto tra F_min e F_max (Banda Effettiva)":
             m_nyq = (abs_freqs >= f_min_nyq) & (abs_freqs <= f_max_nyq) if f_max_nyq > 0 else np.zeros(N, bool)
-        else: m_nyq = (magnitudo_norm >= soglia_calcolata)
+        else: 
+            m_nyq = (magnitudo_norm >= soglia_calcolata)
 
     m_filt = np.ones(N, dtype=bool)
     for f in st.session_state.filtri:
@@ -155,22 +187,17 @@ def pagina_creazione():
     m_tot = m_nyq & m_filt
     idx_effettivi = np.where(m_tot & (freqs > 1e-9))[0]
     banda_effettiva = (float(np.max(freqs[idx_effettivi])) - float(np.min(freqs[idx_effettivi]))) if len(idx_effettivi) > 0 else 0.0
+    
+    # Ricostruzione segnale nel tempo
     ricostruito = np.fft.ifft(np.where(m_tot, fourier_coeffs, 0)).real
 
     # INDICATORI
-    st.write("### Parametri Segnale Originale")
-    o1, o2, o3, o4 = st.columns(4)
-    o1.metric("Numero Campioni", N)
-    o2.metric("Numero Armoniche", np.sum(magnitudo_norm > 1e-6))
-    o3.metric("Banda Totale", f"{f_nyquist_val:.2f} Hz")
-    o4.metric("Valore Massimo", f"{np.max(segnale_orig):.3f} {unit}")
-
-    st.write("### Parametri Segnale Filtrato")
+    st.write("### Riepilogo Parametri")
     f1, f2, f3, f4 = st.columns(4)
-    f1.metric("Numero Campioni", N)
-    f2.metric("Armoniche Residue", np.sum(m_tot))
+    f1.metric("Campioni Analizzati", N)
+    f2.metric("Armoniche Residue", int(np.sum(m_tot)/2)) # Diviso 2 per simmetria FFT
     f3.metric("Banda Effettiva", f"{banda_effettiva:.2f} Hz")
-    f4.metric("Valore Massimo", f"{np.max(ricostruito):.3f} {unit}")
+    f4.metric("Max Filtrato", f"{np.max(ricostruito):.3f} {unit}")
 
     # SALVATAGGIO
     with st.expander("💾 SALVA SEGNALE ELABORATO", expanded=True):
@@ -180,22 +207,29 @@ def pagina_creazione():
             st.session_state.segnali_caricati[nome_n] = ricostruito
             st.session_state.info_segnali[nome_n] = {"fs": fs_reale, "durata": durata_finestra}
             st.success(f"Salvato: {nome_n}"); st.rerun()
-#grafici
+
+    # GRAFICI PLOTLY
     f_s, m_s, mask_s = np.fft.fftshift(freqs), np.fft.fftshift(magnitudo_norm), np.fft.fftshift(m_tot)
-    fig = make_subplots(rows=2, cols=1, vertical_spacing=0.15, subplot_titles=("DOMINIO DEL TEMPO", "DOMINIO DELLA FREQUENZA"))
+    fig = make_subplots(rows=2, cols=1, vertical_spacing=0.15, subplot_titles=("DOMINIO DEL TEMPO", "DOMINIO DELLA FREQUENZA (Magnitudo)"))
+    
+    # Tempo
     fig.add_trace(go.Scatter(x=t_orig, y=segnale_orig, name="Originale", line=dict(color='rgba(150,150,150,0.3)')), row=1, col=1)
     fig.add_trace(go.Scatter(x=t_orig, y=ricostruito, name="Filtrato", line=dict(color='#2ecc71', width=2)), row=1, col=1)
+    
+    # Frequenza
     fig.add_trace(go.Scatter(x=f_s, y=np.where(~mask_s, m_s, np.nan), name="Tagliato", line=dict(color='rgba(150,150,150,0.5)', width=1.5)), row=2, col=1)
     fig.add_trace(go.Scatter(x=f_s, y=np.where(mask_s, m_s, np.nan), name="Mantenuto", fill='tozeroy', line=dict(color='#FFFFFF', width=2.5), fillcolor='rgba(255,255,255,0.2)'), row=2, col=1)
     
     if abilita_nyq:
         fig.add_shape(type="line", x0=f_s[0], x1=f_s[-1], y0=soglia_calcolata, y1=soglia_calcolata, line=dict(color="#e74c3c", width=2, dash="dot"), row=2, col=1)
-        if f_max_nyq > 0:
-            for fl in [f_min_nyq, f_max_nyq, -f_min_nyq, -f_max_nyq]:
-                if abs(fl) > 1e-9: fig.add_vline(x=fl, line=dict(color="#f39c12", width=1, dash="dash"), row=2, col=1)
 
-    fig.update_layout(height=800, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(height=800, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=True)
+    fig.update_xaxes(title_text="Tempo [s]", row=1, col=1)
+    fig.update_xaxes(title_text="Frequenza [Hz]", row=2, col=1)
+    fig.update_yaxes(title_text=unit, row=1, col=1)
+    
     st.plotly_chart(fig, use_container_width=True)
+
 # --- MODULO 2: ANALISI STATISTICA ---
 def pagina_statistica():
     st.title("Analisi Statistica del segnale")
